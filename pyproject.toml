@@ -37,6 +37,14 @@ extra-dependencies = [
 [tool.hatch.envs.types.scripts]
 check = "mypy --install-types --non-interactive {args:src/a2anet tests}"
 
+[tool.hatch.envs.lint]
+extra-dependencies = [
+  "ruff"
+]
+[tool.hatch.envs.lint.scripts]
+check = "ruff check {args:src/a2anet tests}"
+format = "ruff format {args:src/a2anet tests}"
+
 [tool.coverage.run]
 source_pkgs = ["a2anet", "tests"]
 branch = true
@@ -55,3 +63,6 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
 ]
+
+[tool.ruff]
+line-length = 100

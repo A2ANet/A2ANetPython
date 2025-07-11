@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "a2anet"
+dynamic = ["version"]
+description = 'A package that makes implementing the A2A protocol easy'
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+keywords = []
+authors = [
+  { name = "A2A Net", email = "hello@a2anet.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = []
+
+[project.urls]
+Documentation = "https://github.com/A2ANet/A2ANetPython#readme"
+Issues = "https://github.com/A2ANet/A2ANetPython/issues"
+Source = "https://github.com/A2ANet/A2ANetPython"
+
+[tool.hatch.version]
+path = "src/a2anet/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/a2anet tests}"
+
+[tool.coverage.run]
+source_pkgs = ["a2anet", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/a2anet/__about__.py",
+]
+
+[tool.coverage.paths]
+a2anet = ["src/a2anet", "*/A2ANetPython/src/a2anet"]
+tests = ["tests", "*/A2ANetPython/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]

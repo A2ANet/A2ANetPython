@@ -20,7 +20,12 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+  "a2a-sdk",
+  "langgraph",
+  "loguru",
+  "pydantic",
+]
 
 [project.urls]
 Documentation = "https://github.com/A2ANet/A2ANetPython#readme"

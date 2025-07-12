@@ -14,7 +14,12 @@ from a2a.types import (
     TaskArtifactUpdateEvent,
     TaskState,
 )
-from a2a.utils import new_agent_text_message, new_data_artifact, new_task, new_text_artifact
+from a2a.utils import (
+    new_agent_text_message,
+    new_data_artifact,
+    new_task,
+    new_text_artifact,
+)
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.messages.tool import ToolCall
 from langchain_core.runnables.config import RunnableConfig
@@ -65,7 +70,7 @@ class LangGraphAgentExecutor(AgentExecutor):
         config: RunnableConfig = {"configurable": {"thread_id": task.contextId}}
         message_ids: Set[str] = set()
 
-        for event in self.graph.stream(inputs, config, stream_mode="values"):
+        async for event in self.graph.astream(inputs, config, stream_mode="values"):
             message: AnyMessage = event["messages"][-1]
 
             if message.id in message_ids:
@@ -255,7 +260,7 @@ class LangGraphAgentExecutor(AgentExecutor):
                 text=structured_response.artifact_output,
             )
 
-        event_queue.enqueue_event(
+        await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
                 artifact=artifact,
                 contextId=task.contextId,

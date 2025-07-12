@@ -14,7 +14,12 @@ from a2a.types import (
     TaskArtifactUpdateEvent,
     TaskState,
 )
-from a2a.utils import new_agent_text_message, new_data_artifact, new_task, new_text_artifact
+from a2a.utils import (
+    new_agent_text_message,
+    new_data_artifact,
+    new_task,
+    new_text_artifact,
+)
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.messages.tool import ToolCall
 from langchain_core.runnables.config import RunnableConfig
@@ -65,7 +70,7 @@ class LangGraphAgentExecutor(AgentExecutor):
         config: RunnableConfig = {"configurable": {"thread_id": task.contextId}}
         message_ids: Set[str] = set()
 
-        for event in self.graph.stream(inputs, config, stream_mode="values"):
+        async for event in self.graph.astream(inputs, config, stream_mode="values"):
             message: AnyMessage = event["messages"][-1]
 
             if message.id in message_ids:
@@ -96,18 +101,18 @@ class LangGraphAgentExecutor(AgentExecutor):
         content: str | List[str | Dict] = message.content
 
         if isinstance(content, str) and content:
-            task_updater.update_status(
+            await task_updater.update_status(
                 TaskState.working, new_agent_text_message(content, task.contextId, task.id)
             )
         elif isinstance(content, list):
             for item in content:
                 if isinstance(item, str):
-                    task_updater.update_status(
+                    await task_updater.update_status(
                         TaskState.working,
                         new_agent_text_message(item, task.contextId, task.id),
                     )
                 elif isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
-                    task_updater.update_status(
+                    await task_updater.update_status(
                         TaskState.working,
                         new_agent_text_message(item["text"], task.contextId, task.id),
                     )
@@ -141,7 +146,7 @@ class LangGraphAgentExecutor(AgentExecutor):
             taskId=task.id,
         )
 
-        task_updater.update_status(TaskState.working, message)
+        await task_updater.update_status(TaskState.working, message)
 
     async def _handle_tool_message(
         self, message: ToolMessage, task: Task, task_updater: TaskUpdater
@@ -176,7 +181,7 @@ class LangGraphAgentExecutor(AgentExecutor):
             taskId=task.id,
         )
 
-        task_updater.update_status(TaskState.working, message)
+        await task_updater.update_status(TaskState.working, message)
 
     async def _handle_structured_response(
         self, config: RunnableConfig, event_queue: EventQueue, task: Task, task_updater: TaskUpdater
@@ -208,7 +213,7 @@ class LangGraphAgentExecutor(AgentExecutor):
         task_state: TaskState = TaskState(structured_response.task_state)
 
         if task_state != TaskState.completed:
-            task_updater.update_status(
+            await task_updater.update_status(
                 task_state,
                 new_agent_text_message(
                     structured_response.task_state_message, task.contextId, task.id
@@ -218,7 +223,7 @@ class LangGraphAgentExecutor(AgentExecutor):
         else:
             await self._handle_structured_response_artifact(structured_response, event_queue, task)
 
-            task_updater.update_status(
+            await task_updater.update_status(
                 TaskState.completed,
                 message=new_agent_text_message(
                     structured_response.task_state_message, task.contextId, task.id
@@ -255,7 +260,7 @@ class LangGraphAgentExecutor(AgentExecutor):
                 text=structured_response.artifact_output,
             )
 
-        event_queue.enqueue_event(
+        await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
                 artifact=artifact,
                 contextId=task.contextId,

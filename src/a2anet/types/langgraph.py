@@ -35,10 +35,7 @@ class StructuredResponse(BaseModel):
         )
     )
     task_state_message: str = Field(
-        description=(
-            "A message to the user about the state of the task. "
-            "If the state is 'input-required' or 'auth-required', it should explain what input or authentication is required to complete the task."
-        )
+        description=("A message explaining the state of the task. 1-2 sentences.")
     )
     artifact_title: Optional[str] = Field(
         default=None,

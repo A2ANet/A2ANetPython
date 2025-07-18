@@ -63,7 +63,7 @@ class LangGraphAgentExecutor(AgentExecutor):
 
         if not task:
             task = new_task(context.message)
-            event_queue.enqueue_event(task)
+            await event_queue.enqueue_event(task)
 
         task_updater: TaskUpdater = TaskUpdater(event_queue, task.id, task.contextId)
         inputs: Dict[str, Any] = {"messages": [("user", query)]}

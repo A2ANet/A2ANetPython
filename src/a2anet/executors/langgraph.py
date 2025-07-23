@@ -13,6 +13,7 @@ from a2a.types import (
     Task,
     TaskArtifactUpdateEvent,
     TaskState,
+    TextPart,
 )
 from a2a.utils import (
     new_agent_text_message,
@@ -165,13 +166,15 @@ class LangGraphAgentExecutor(AgentExecutor):
 
         try:
             tool_call_result: str | Dict | List[str | Dict] = json.loads(tool_call_result_content)
+            part: DataPart = DataPart(data=tool_call_result)
         except (json.JSONDecodeError, TypeError):
-            tool_call_result = tool_call_result_content
+            tool_call_result: str = tool_call_result_content
+            part: TextPart = TextPart(text=tool_call_result)
 
         message: Message = Message(
             contextId=task.contextId,
             messageId=str(uuid.uuid4()),
-            parts=[DataPart(data=tool_call_result)],
+            parts=[part],
             metadata={
                 "type": "tool-call-result",
                 "toolCallId": message.tool_call_id,

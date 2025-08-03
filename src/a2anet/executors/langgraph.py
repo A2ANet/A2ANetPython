@@ -66,9 +66,9 @@ class LangGraphAgentExecutor(AgentExecutor):
             task = new_task(context.message)
             await event_queue.enqueue_event(task)
 
-        task_updater: TaskUpdater = TaskUpdater(event_queue, task.id, task.contextId)
+        task_updater: TaskUpdater = TaskUpdater(event_queue, task.id, task.context_id)
         inputs: Dict[str, Any] = {"messages": [("user", query)]}
-        config: RunnableConfig = {"configurable": {"thread_id": task.contextId}}
+        config: RunnableConfig = {"configurable": {"thread_id": task.context_id}}
         message_ids: Set[str] = set()
 
         async for event in self.graph.astream(inputs, config, stream_mode="values"):
@@ -103,19 +103,19 @@ class LangGraphAgentExecutor(AgentExecutor):
 
         if isinstance(content, str) and content:
             await task_updater.update_status(
-                TaskState.working, new_agent_text_message(content, task.contextId, task.id)
+                TaskState.working, new_agent_text_message(content, task.context_id, task.id)
             )
         elif isinstance(content, list):
             for item in content:
                 if isinstance(item, str):
                     await task_updater.update_status(
                         TaskState.working,
-                        new_agent_text_message(item, task.contextId, task.id),
+                        new_agent_text_message(item, task.context_id, task.id),
                     )
                 elif isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
                     await task_updater.update_status(
                         TaskState.working,
-                        new_agent_text_message(item["text"], task.contextId, task.id),
+                        new_agent_text_message(item["text"], task.context_id, task.id),
                     )
 
         if message.tool_calls:
@@ -135,8 +135,8 @@ class LangGraphAgentExecutor(AgentExecutor):
             task_updater: The TaskUpdater for sending updates.
         """
         message: Message = Message(
-            contextId=task.contextId,
-            messageId=str(uuid.uuid4()),
+            context_id=task.context_id,
+            message_id=str(uuid.uuid4()),
             parts=[DataPart(data=tool_call["args"])],
             metadata={
                 "type": "tool-call",
@@ -144,7 +144,7 @@ class LangGraphAgentExecutor(AgentExecutor):
                 "toolCallName": tool_call["name"],
             },
             role=Role.agent,
-            taskId=task.id,
+            task_id=task.id,
         )
 
         await task_updater.update_status(TaskState.working, message)
@@ -172,8 +172,8 @@ class LangGraphAgentExecutor(AgentExecutor):
             part: TextPart = TextPart(text=tool_call_result)
 
         message: Message = Message(
-            contextId=task.contextId,
-            messageId=str(uuid.uuid4()),
+            context_id=task.context_id,
+            message_id=str(uuid.uuid4()),
             parts=[part],
             metadata={
                 "type": "tool-call-result",
@@ -181,7 +181,7 @@ class LangGraphAgentExecutor(AgentExecutor):
                 "toolCallName": message.name,
             },
             role=Role.agent,
-            taskId=task.id,
+            task_id=task.id,
         )
 
         await task_updater.update_status(TaskState.working, message)
@@ -219,7 +219,7 @@ class LangGraphAgentExecutor(AgentExecutor):
             await task_updater.update_status(
                 task_state,
                 new_agent_text_message(
-                    structured_response.task_state_message, task.contextId, task.id
+                    structured_response.task_state_message, task.context_id, task.id
                 ),
                 final=True,
             )
@@ -229,7 +229,7 @@ class LangGraphAgentExecutor(AgentExecutor):
             await task_updater.update_status(
                 TaskState.completed,
                 message=new_agent_text_message(
-                    structured_response.task_state_message, task.contextId, task.id
+                    structured_response.task_state_message, task.context_id, task.id
                 ),
                 final=True,
             )
@@ -266,8 +266,8 @@ class LangGraphAgentExecutor(AgentExecutor):
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
                 artifact=artifact,
-                contextId=task.contextId,
-                taskId=task.id,
+                context_id=task.context_id,
+                task_id=task.id,
             )
         )
 

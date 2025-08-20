@@ -17,9 +17,8 @@ from a2a.types import (
 )
 from a2a.utils import (
     new_agent_text_message,
-    new_data_artifact,
+    new_artifact,
     new_task,
-    new_text_artifact,
 )
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.messages.tool import ToolCall
@@ -28,19 +27,22 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
 from loguru import logger
 
+from a2anet.types.langgraph import Artifact as A2ANetArtifact
 from a2anet.types.langgraph import StructuredResponse
 
 
 class LangGraphAgentExecutor(AgentExecutor):
     """An A2A AgentExecutor for LangGraph's `CompiledStateGraph`."""
 
-    def __init__(self, graph: CompiledStateGraph):
+    def __init__(self, graph: CompiledStateGraph, input_data: Dict[str, Any] | None = None):
         """Initializes the LangGraphAgentExecutor.
 
         Args:
             graph: A compiled LangGraph state graph.
+            input_data: The initial input data for the graph.
         """
-        self.graph = graph
+        self.graph: CompiledStateGraph = graph
+        self.input_data: Dict[str, Any] | None = input_data
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Executes the agent graph for a given request.
@@ -66,12 +68,30 @@ class LangGraphAgentExecutor(AgentExecutor):
             task = new_task(context.message)
             await event_queue.enqueue_event(task)
 
+        # A2A
         task_updater: TaskUpdater = TaskUpdater(event_queue, task.id, task.context_id)
-        inputs: Dict[str, Any] = {"messages": [("user", query)]}
+
+        # LangGraph
         config: RunnableConfig = {"configurable": {"thread_id": task.context_id}}
+        state: StateSnapshot = await self.graph.aget_state(config)
+        input_data: Dict[str, Any] | None = None
+
+        if "configurable" not in state.config:
+            raise ValueError("`state` is not a valid state snapshot!")
+
+        if "checkpoint_id" not in state.config["configurable"]:
+            logger.info("No checkpoint found.")
+            input_data = {
+                **self.input_data,
+                "messages": [{"role": "user", "content": query}],
+            }
+        else:
+            logger.info("Checkpoint found.")
+            input_data = {"messages": [{"role": "user", "content": query}]}
+
         message_ids: Set[str] = set()
 
-        async for event in self.graph.astream(inputs, config, stream_mode="values"):
+        async for event in self.graph.astream(input_data, config, stream_mode="values"):
             message: AnyMessage = event["messages"][-1]
 
             if message.id in message_ids:
@@ -171,7 +191,7 @@ class LangGraphAgentExecutor(AgentExecutor):
             tool_call_result: str = tool_call_result_content
             part: TextPart = TextPart(text=tool_call_result)
 
-        message: Message = Message(
+        message_2: Message = Message(
             context_id=task.context_id,
             message_id=str(uuid.uuid4()),
             parts=[part],
@@ -179,12 +199,13 @@ class LangGraphAgentExecutor(AgentExecutor):
                 "type": "tool-call-result",
                 "toolCallId": message.tool_call_id,
                 "toolCallName": message.name,
+                **{"toolCallArtifact": message.artifact if message.artifact else None},
             },
             role=Role.agent,
             task_id=task.id,
         )
 
-        await task_updater.update_status(TaskState.working, message)
+        await task_updater.update_status(TaskState.working, message_2)
 
     async def _handle_structured_response(
         self, config: RunnableConfig, event_queue: EventQueue, task: Task, task_updater: TaskUpdater
@@ -203,7 +224,7 @@ class LangGraphAgentExecutor(AgentExecutor):
         Raises:
             Exception: If the graph state does not contain a 'structured_response'.
         """
-        current_state: StateSnapshot = self.graph.get_state(config)
+        current_state: StateSnapshot = await self.graph.aget_state(config)
         structured_response: StructuredResponse | None = current_state.values.get(
             "structured_response"
         )
@@ -218,58 +239,44 @@ class LangGraphAgentExecutor(AgentExecutor):
         if task_state != TaskState.completed:
             await task_updater.update_status(
                 task_state,
-                new_agent_text_message(
-                    structured_response.task_state_message, task.context_id, task.id
-                ),
                 final=True,
             )
         else:
-            await self._handle_structured_response_artifact(structured_response, event_queue, task)
+            await self._handle_structured_response_artifacts(
+                structured_response.artifacts, event_queue, task
+            )
 
             await task_updater.update_status(
                 TaskState.completed,
-                message=new_agent_text_message(
-                    structured_response.task_state_message, task.context_id, task.id
-                ),
                 final=True,
             )
 
-    async def _handle_structured_response_artifact(
-        self, structured_response: StructuredResponse, event_queue: EventQueue, task: Task
+    async def _handle_structured_response_artifacts(
+        self, artifacts: List[A2ANetArtifact], event_queue: EventQueue, task: Task
     ) -> None:
-        """Creates and enqueues an artifact from the structured response.
+        """Creates and enqueues artifacts from the structured response.
 
-        The artifact can be either a data artifact (if the output is JSON) or a
-        text artifact.
+        The artifacts can be either text or data artifacts.
 
         Args:
-            structured_response: The structured response from the graph.
+            artifacts: The artifacts from the structured response.
             event_queue: The event queue for sending updates.
             task: The current task.
         """
-        # Try to parse the artifact output as JSON
-        artifact: Artifact
-
-        try:
-            artifact = new_data_artifact(
-                name=structured_response.artifact_title,
-                description=structured_response.artifact_description,
-                data=json.loads(structured_response.artifact_output),
-            )
-        except (json.JSONDecodeError, TypeError):
-            artifact = new_text_artifact(
-                name=structured_response.artifact_title,
-                description=structured_response.artifact_description,
-                text=structured_response.artifact_output,
+        for artifact in artifacts:
+            artifact_2: Artifact = new_artifact(
+                name=artifact.name,
+                description=artifact.description,
+                parts=[artifact.part],
             )
 
-        await event_queue.enqueue_event(
-            TaskArtifactUpdateEvent(
-                artifact=artifact,
-                context_id=task.context_id,
-                task_id=task.id,
+            await event_queue.enqueue_event(
+                TaskArtifactUpdateEvent(
+                    artifact=artifact_2,
+                    context_id=task.context_id,
+                    task_id=task.id,
+                )
             )
-        )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Cancels the agent execution.

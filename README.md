@@ -245,12 +245,16 @@ If you want to change the behaviour of a method in `LangGraphAgentExecutor` you 
 For example:
 
 ```python
+from typing import Set
+
 from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import Task
 from langchain_core.messages import AIMessage
 
 class MyLangGraphAgentExecutor(LangGraphAgentExecutor):
-    async def _handle_ai_message(self, message: AIMessage, task: Task, task_updater: TaskUpdater):
+    async def _handle_ai_message(
+        self, message: AIMessage, message_ids: Set[str], task: Task, task_updater: TaskUpdater
+    ):
         print("Hello World!")
 
 agent_executor: LangGraphAgentExecutor = MyLangGraphAgentExecutor(graph)

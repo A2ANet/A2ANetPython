@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Set
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -9,6 +10,7 @@ from a2a.types import (
     Artifact,
     DataPart,
     Message,
+    Part,
     Role,
     Task,
     TaskArtifactUpdateEvent,
@@ -16,12 +18,9 @@ from a2a.types import (
     TextPart,
 )
 from a2a.utils import (
-    new_agent_text_message,
-    new_artifact,
     new_task,
 )
-from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
-from langchain_core.messages.tool import ToolCall
+from langchain_core.messages import AIMessage, AnyMessage, ToolCall, ToolMessage
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
@@ -61,7 +60,6 @@ class LangGraphAgentExecutor(AgentExecutor):
         if not context.message:
             raise Exception("No message in context")
 
-        query: str = context.get_user_input()
         task: Task | None = context.current_task
 
         if not task:
@@ -79,36 +77,43 @@ class LangGraphAgentExecutor(AgentExecutor):
         if "configurable" not in state.config:
             raise ValueError("`state` is not a valid state snapshot!")
 
-        if "checkpoint_id" not in state.config["configurable"]:
-            logger.info("No checkpoint found.")
-            input_data = {
-                **{self.input_data if self.input_data else {}},
-                "messages": [{"role": "user", "content": query}],
-            }
-        else:
-            logger.info("Checkpoint found.")
-            input_data = {"messages": [{"role": "user", "content": query}]}
+        query: str = context.get_user_input()
+
+        if query:
+            if "checkpoint_id" not in state.config["configurable"]:
+                logger.info("Checkpoint not found.")
+                input_data = {
+                    **(self.input_data if self.input_data else {}),
+                    "context_id": task.context_id,
+                    "task_id": task.id,
+                    "messages": [{"role": "user", "content": query}],
+                }
+            else:
+                logger.info("Checkpoint found.")
+                input_data = {
+                    "context_id": task.context_id,
+                    "task_id": task.id,
+                    "messages": [{"role": "user", "content": query}],
+                }
 
         message_ids: Set[str] = set()
+        if task.status.message:
+            message_ids.add(task.status.message.message_id)
+        if task.history:
+            message_ids.update({message.message_id for message in task.history})
 
         async for event in self.graph.astream(input_data, config, stream_mode="values"):
             message: AnyMessage = event["messages"][-1]
 
-            if message.id in message_ids:
-                continue
-
-            logger.info(f"Message: {message.model_dump_json(indent=4)}")
-            message_ids.add(message.id)
-
             if isinstance(message, AIMessage):
-                await self._handle_ai_message(message, task, task_updater)
+                await self._handle_ai_message(message, message_ids, task, task_updater)
             elif isinstance(message, ToolMessage):
-                await self._handle_tool_message(message, task, task_updater)
+                await self._handle_tool_message(message, message_ids, task, task_updater)
 
         await self._handle_structured_response(config, event_queue, task, task_updater)
 
     async def _handle_ai_message(
-        self, message: AIMessage, task: Task, task_updater: TaskUpdater
+        self, message: AIMessage, message_ids: Set[str], task: Task, task_updater: TaskUpdater
     ) -> None:
         """Handles AIMessage from the graph stream.
 
@@ -122,28 +127,76 @@ class LangGraphAgentExecutor(AgentExecutor):
         content: str | List[str | Dict] = message.content
 
         if isinstance(content, str) and content:
+            if message.id in message_ids:
+                return
+            message_ids.add(message.id)
+            logger.info(f"AI Message: {message.model_dump_json(indent=4)}")
+
             await task_updater.update_status(
-                TaskState.working, new_agent_text_message(content, task.context_id, task.id)
+                TaskState.working,
+                Message(
+                    role=Role.agent,
+                    parts=[Part(root=TextPart(text=content))],
+                    message_id=message.id,
+                    task_id=task.id,
+                    context_id=task.context_id,
+                    metadata={
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                ),
             )
         elif isinstance(content, list):
-            for item in content:
+            for item_i, item in enumerate(content):
+                message_id: str = message.id + "_" + str(item_i)
+                if message_id in message_ids:
+                    continue
+
                 if isinstance(item, str):
+                    message_ids.add(message_id)
+                    logger.info(f"AI Message: {message.model_dump_json(indent=4)}")
+
                     await task_updater.update_status(
                         TaskState.working,
-                        new_agent_text_message(item, task.context_id, task.id),
+                        Message(
+                            role=Role.agent,
+                            parts=[Part(root=TextPart(text=item))],
+                            message_id=message_id,
+                            task_id=task.id,
+                            context_id=task.context_id,
+                            metadata={
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        ),
                     )
                 elif isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                    message_ids.add(message_id)
+                    logger.info(f"AI Message: {message.model_dump_json(indent=4)}")
+
                     await task_updater.update_status(
                         TaskState.working,
-                        new_agent_text_message(item["text"], task.context_id, task.id),
+                        Message(
+                            role=Role.agent,
+                            parts=[Part(root=TextPart(text=item["text"]))],
+                            message_id=message_id,
+                            task_id=task.id,
+                            context_id=task.context_id,
+                            metadata={
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        ),
                     )
 
         if message.tool_calls:
             for tool_call in message.tool_calls:
-                await self._handle_tool_call(tool_call, task, task_updater)
+                await self._handle_tool_call(message, message_ids, tool_call, task, task_updater)
 
     async def _handle_tool_call(
-        self, tool_call: ToolCall, task: Task, task_updater: TaskUpdater
+        self,
+        message: AIMessage,
+        message_ids: Set[str],
+        tool_call: ToolCall,
+        task: Task,
+        task_updater: TaskUpdater,
     ) -> None:
         """Handles a ToolCall from an AIMessage.
 
@@ -154,14 +207,21 @@ class LangGraphAgentExecutor(AgentExecutor):
             task: The current task.
             task_updater: The TaskUpdater for sending updates.
         """
+        message_id: str = message.id + "_" + tool_call["id"]
+        if message_id in message_ids:
+            return
+        message_ids.add(message_id)
+        logger.info(f"Tool Call: {json.dumps(tool_call, indent=4)}")
+
         message: Message = Message(
             context_id=task.context_id,
-            message_id=str(uuid.uuid4()),
+            message_id=message_id,
             parts=[DataPart(data=tool_call["args"])],
             metadata={
                 "type": "tool-call",
                 "toolCallId": tool_call["id"],
                 "toolCallName": tool_call["name"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             role=Role.agent,
             task_id=task.id,
@@ -170,7 +230,7 @@ class LangGraphAgentExecutor(AgentExecutor):
         await task_updater.update_status(TaskState.working, message)
 
     async def _handle_tool_message(
-        self, message: ToolMessage, task: Task, task_updater: TaskUpdater
+        self, message: ToolMessage, message_ids: Set[str], task: Task, task_updater: TaskUpdater
     ) -> None:
         """Handles a ToolMessage from the graph stream.
 
@@ -182,24 +242,30 @@ class LangGraphAgentExecutor(AgentExecutor):
             task: The current task.
             task_updater: The TaskUpdater for sending updates.
         """
+        if message.id in message_ids:
+            return
+        message_ids.add(message.id)
+
         tool_call_result_content: str | List[str | Dict] = message.content
 
         try:
             tool_call_result: str | Dict | List[str | Dict] = json.loads(tool_call_result_content)
             part: DataPart = DataPart(data=tool_call_result)
+            logger.info(f"Tool Call Result: {json.dumps(tool_call_result, indent=4)}")
         except (json.JSONDecodeError, TypeError):
             tool_call_result: str = tool_call_result_content
             part: TextPart = TextPart(text=tool_call_result)
+            logger.info(f"Tool Call Result: {tool_call_result}")
 
         message_2: Message = Message(
             context_id=task.context_id,
-            message_id=str(uuid.uuid4()),
+            message_id=message.id,
             parts=[part],
             metadata={
                 "type": "tool-call-result",
                 "toolCallId": message.tool_call_id,
                 "toolCallName": message.name,
-                **{"toolCallArtifact": message.artifact if message.artifact else None},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             role=Role.agent,
             task_id=task.id,
@@ -264,10 +330,14 @@ class LangGraphAgentExecutor(AgentExecutor):
             task: The current task.
         """
         for artifact in artifacts:
-            artifact_2: Artifact = new_artifact(
+            artifact_2: Artifact = Artifact(
+                artifact_id=str(uuid.uuid4()),
                 name=artifact.name,
                 description=artifact.description,
                 parts=[artifact.part],
+                metadata={
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
             )
 
             await event_queue.enqueue_event(

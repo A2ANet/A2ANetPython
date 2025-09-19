@@ -21,14 +21,14 @@ It does this by defining an `AgentExecutor` object for each agent framework (e.g
 
 See [Installation](#installation) and [Quick Start](#quick-start) to get started.
 
-## Table of Contents
+## 📚 Table of Contents
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [License](#license)
 - [Join the A2A Net Community](#join-the-a2a-net-community)
 
-## Installation
+## 🛠️ Installation
 
 To install with pip:
 
@@ -42,7 +42,7 @@ To install with uv:
 uv add a2anet
 ```
 
-## Quick Start
+## 🚀 Quick Start
 
 Before going through the Quick Start it might be helpful to read [Key Concepts in A2A](https://a2aproject.github.io/A2A/latest/topics/key-concepts/), especially the "Core Actors" and "Fundamental Communication Elements" sections.
 
@@ -82,6 +82,7 @@ from langgraph.prebuilt import create_react_agent
 
 SYSTEM_INSTRUCTION: str = (
     "You are a helpful assistant that can search the web with the Tavily API and answer questions about the results.\n"
+    "You should only respond to messages that can be answered by searching the web, and if the user's most recent message doesn't contain a question, or contains a question that can't be answered by searching the web, you should explain that to the user and ask them to try again with an appropriate query.\n"
     "If the `tavily_search` tool returns insufficient results, you should explain that to the user and ask them to try again with a more specific query.\n"
     "You can use markdown format to format your responses."
 )
@@ -90,7 +91,12 @@ SYSTEM_INSTRUCTION: str = (
 RESPONSE_FORMAT_INSTRUCTION: str = (
     "You are an expert A2A protocol agent.\n"
     "Your task is to read through all previous messages thoroughly and determine what the state of the task is.\n"
-    "If the task is complete, extract the task output into an artifact. The task is complete if the `tavily_search` tool has been called and the results are sufficient to answer the user's question."
+    "The state of the task should be:\n"
+    "- 'completed' if the user's most recent message contains a question that can be answered by searching the web, the `tavily_search` tool has been called, and the results are sufficient to answer the user's question.\n"
+    "- 'failed' if the user's most recent message contains a question that can be answered by searching the web, the `tavily_search` tool has been called, and the results are insufficient to answer the user's question.\n"
+    "- 'rejected' if the user's most recent message doesn't contain a question or contains a question that can't be answered by searching the web.\n"
+    "If the task is 'completed', set 'task_state' to 'completed' and include at least one artifact in 'artifacts'.\n"
+    "If the task is not 'completed', do not include any artifacts."
 )
 
 graph = create_react_agent(
@@ -116,8 +122,40 @@ This allows the agent to share its progress (and optionally, steps) with `Messag
 `src/a2anet/types/langgraph.py`:
 
 ```python
-from pydantic import BaseModel
+from typing import List, Literal, Optional
 
+from a2a.types import DataPart, TextPart
+from pydantic import BaseModel, Field, model_validator
+
+
+class Artifact(BaseModel):
+    name: Optional[str] = Field(
+        default=None,
+        description="3-5 words describing the task output.",
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="1 sentence describing the task output.",
+    )
+    part: Optional[TextPart | DataPart] = Field(
+        default=None,
+        description="Task output. This can be a string, a markdown string, or a dictionary.",
+    )
+
+
+# The `TaskState`s are:
+#
+# submitted = 'submitted'
+# working = 'working'
+# input_required = 'input-required'
+# completed = 'completed'
+# canceled = 'canceled'
+# failed = 'failed'
+# rejected = 'rejected'
+# auth_required = 'auth-required'
+# unknown = 'unknown'
+#
+# `submitted`, `working`, `canceled`, and `unknown` are not decidable by the agent (they are handled in the `AgentExecutor`)
 class StructuredResponse(BaseModel):
     task_state: Literal[
         "input-required",
@@ -135,24 +173,22 @@ class StructuredResponse(BaseModel):
             "- 'auth-required': The task requires authentication from the user.\n"
         )
     )
-    task_state_message: str = Field(
-        description=(
-            "A message to the user about the state of the task. "
-            "If the state is 'input-required' or 'auth-required', it should explain what input or authentication is required to complete the task."
-        )
-    )
-    artifact_title: Optional[str] = Field(
+    artifacts: Optional[List[Artifact]] = Field(
         default=None,
-        description="Required if the `task_state` is 'completed'. 3-5 words describing the task output.",
+        description="Required if `task_state` is 'completed'. If `task_state` is not 'completed', `artifacts` should not be provided.",
     )
-    artifact_description: Optional[str] = Field(
-        default=None,
-        description="Required if the `task_state` is 'completed'. 1 sentence describing the task output.",
-    )
-    artifact_output: Optional[str] = Field(
-        default=None,
-        description="Required if the `task_state` is 'completed'. The task output. This can be a string, a markdown string, or a string that is parsable as JSON.",
-    )
+
+    @model_validator(mode="after")
+    def _require_artifacts_when_completed(self):
+        if self.task_state != "completed" and self.artifacts and len(self.artifacts) > 0:
+            raise ValueError("`task_state` is not 'completed', `artifacts` should not be provided.")
+
+        if self.task_state == "completed" and not (self.artifacts and len(self.artifacts) > 0):
+            raise ValueError(
+                "`task_state` is 'completed', `artifacts` must contain at least one item."
+            )
+
+        return self
 ```
 
 ### Define the Agent's Agent Card
@@ -236,11 +272,11 @@ uv run main.py
 
 The server will start on `http://localhost:8080`.
 
-## License
+## 📄 License
 
 `a2anet` is distributed under the terms of the [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) license.
 
-## Join the A2A Net Community
+## 🤝 Join the A2A Net Community
 
 A2A Net is a site to find and share AI agents and open-source community. Join to share your A2A agents, ask questions, stay up-to-date with the latest A2A news, be the first to hear about open-source releases, tutorials, and more!
 

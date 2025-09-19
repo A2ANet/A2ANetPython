@@ -82,7 +82,7 @@ class LangGraphAgentExecutor(AgentExecutor):
         if "checkpoint_id" not in state.config["configurable"]:
             logger.info("No checkpoint found.")
             input_data = {
-                **self.input_data,
+                **{self.input_data if self.input_data else {}},
                 "messages": [{"role": "user", "content": query}],
             }
         else:
